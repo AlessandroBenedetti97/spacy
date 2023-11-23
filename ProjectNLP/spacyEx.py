@@ -4,73 +4,87 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import LabelEncoder
 import spacy
 from spacy.lang.it.stop_words import STOP_WORDS
 import matplotlib.pyplot as plt
 
-# Carica il dataset utilizzando datasets.load_dataset
-Cdataset = load_dataset("itacasehold/itacasehold", split='train')
+# Carica i tre dataset per addestramento, test e validazione separatamente
+training_dataset = load_dataset("itacasehold/itacasehold", split = 'train')
+test_dataset = load_dataset("itacasehold/itacasehold", split='test')
+validation_dataset = load_dataset("itacasehold/itacasehold", split='validation')
 
-# Estrai documenti e etichette dal dataset di addestramento
-documents = Cdataset["summary"]
-labels = Cdataset["materia"]
+# Estrai documenti e etichette da ciascun dataset
+training_documents = training_dataset["summary"]
+training_labels = training_dataset["materia"]
 
 # Conta le occorrenze di ciascuna etichetta nel dataset
-label_counts = Counter(labels)
+label_counts = Counter(training_labels)
 
 # Trova etichette che compaiono almeno 5 volte
-common_labels = [label for label, count in label_counts.items() if count >= 13]
+common_labels = [label for label, count in label_counts.items() if count >= 7]
 
 # Filtra i documenti e le etichette mantenendo solo quelli con etichette comuni
-filtered_indices = [i for i, label in enumerate(labels) if label in common_labels]
-documents_filtered = [documents[i] for i in filtered_indices]
-labels_filtered = [labels[i] for i in filtered_indices]
+filtered_indices = [i for i, label in enumerate(training_labels) if label in common_labels]
+training_documents = [training_documents[i] for i in filtered_indices]
+training_labels = [training_labels[i] for i in filtered_indices]
 
-# Visualizza un istogramma delle frequenze dopo il filtraggio
-label_counts_filtered = Counter(labels_filtered)
-plt.bar(label_counts_filtered.keys(), label_counts_filtered.values())
-plt.xlabel('Etichetta')
-plt.ylabel('Frequenza')
-plt.title('Frequenza delle etichette nel dataset (dopo il filtraggio)')
-plt.xticks(rotation=45, ha="right")
-plt.show()
+test_documents = test_dataset["summary"]
+test_labels = test_dataset["materia"]
+
+# Filtra i documenti e le etichette mantenendo solo quelli con etichette comuni
+filtered_indices = [i for i, label in enumerate(test_labels) if label in common_labels]
+test_documents = [test_documents[i] for i in filtered_indices]
+test_labels = [test_labels[i] for i in filtered_indices]
+
+validation_documents = validation_dataset["summary"]
+validation_labels = validation_dataset["materia"]
+
+# Filtra i documenti e le etichette mantenendo solo quelli con etichette comuni
+filtered_indices = [i for i, label in enumerate(validation_labels) if label in common_labels]
+validation_documents = [validation_documents[i] for i in filtered_indices]
+validation_labels = [validation_labels[i] for i in filtered_indices]
+
 
 # Rimuovi la punteggiatura, lemmatizza e rimuovi le stop words dal dataset di Spacy
 nlp = spacy.load('it_core_news_lg')
 
-documents_preprocessed = [
+training_documents = [
     " ".join([token.lemma_.lower() for token in nlp(doc) if not token.is_punct and token.text.lower() not in STOP_WORDS])
-    for doc in documents_filtered
+    for doc in training_documents
+]
+
+test_documents = [
+    " ".join([token.lemma_.lower() for token in nlp(doc) if not token.is_punct and token.text.lower() not in STOP_WORDS])
+    for doc in test_documents
+]
+
+validation_documents = [
+    " ".join([token.lemma_.lower() for token in nlp(doc) if not token.is_punct and token.text.lower() not in STOP_WORDS])
+    for doc in validation_documents
 ]
 
 # Usa il TF-IDF per ottenere le rappresentazioni vettoriali
 vectorizer = TfidfVectorizer()
-tfidf_matrix = vectorizer.fit_transform(documents_preprocessed)
-tfidf_embeddings = tfidf_matrix.toarray()
+training_tfidf_matrix = vectorizer.fit_transform(training_documents)
+test_tfidf_matrix = vectorizer.transform(test_documents)
+validation_tfidf_matrix = vectorizer.transform(validation_documents)
 
 # Converte l'array numpy TF-IDF in un tensore PyTorch
-embeddings_tensor = torch.tensor(tfidf_embeddings, dtype=torch.float32)
+training_embeddings_tensor = torch.tensor(training_tfidf_matrix.toarray(), dtype=torch.float32)
+test_embeddings_tensor = torch.tensor(test_tfidf_matrix.toarray(), dtype=torch.float32)
+validation_embeddings_tensor = torch.tensor(validation_tfidf_matrix.toarray(), dtype=torch.float32)
 
 # Tratta labels come una lista di stringhe
-labels_list = labels_filtered
 label_encoder = LabelEncoder()
-labels_encoded = label_encoder.fit_transform(labels_list)
-labels_tensor = torch.tensor(labels_encoded, dtype=torch.long)
+training_labels_encoded = label_encoder.fit_transform(training_labels)
+test_labels_encoded = label_encoder.transform(test_labels)
+validation_labels_encoded = label_encoder.transform(validation_labels)
 
-# Suddividi il dataset di addestramento in set di addestramento, validazione e test
-train_indices, test_indices = train_test_split(range(len(labels_encoded)), test_size=0.2, random_state=42)
-train_indices, val_indices = train_test_split(train_indices, test_size=0.1, random_state=42)
-
-# Seleziona gli embeddings e le etichette di addestramento, validazione e test
-train_embeddings = embeddings_tensor[train_indices]
-train_labels = labels_tensor[train_indices]
-val_embeddings = embeddings_tensor[val_indices]
-val_labels = labels_tensor[val_indices]
-test_embeddings = embeddings_tensor[test_indices]
-test_labels = labels_tensor[test_indices]
+training_labels_tensor = torch.tensor(training_labels_encoded, dtype=torch.long)
+test_labels_tensor = torch.tensor(test_labels_encoded, dtype=torch.long)
+validation_labels_tensor = torch.tensor(validation_labels_encoded, dtype=torch.long)
 
 # Definisci il tuo modello con due strati nascosti
 class SimpleClassifier(nn.Module):
@@ -89,24 +103,24 @@ class SimpleClassifier(nn.Module):
         return x
 
 # Parametri del modello
-input_size = tfidf_embeddings.shape[1]  # Dimensione con TF-IDF
+input_size = training_tfidf_matrix.shape[1]  # Dimensione con TF-IDF
 hidden_size = 64
-output_size = len(set(labels_filtered))
+output_size = len(set(training_labels))
 
 # Inizializza il modello
 model = SimpleClassifier(input_size, hidden_size, output_size, dropout_rate=0.5)
 
 # Utilizza CrossEntropyLoss con peso delle classi e Adam come ottimizzatore
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 # Training del modello
-num_epochs = 50
-batch_size = 32
+num_epochs = 150
+batch_size = 128
 
-train_dataset = TensorDataset(train_embeddings, train_labels)
+train_dataset = TensorDataset(training_embeddings_tensor, training_labels_tensor)
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-val_dataset = TensorDataset(val_embeddings, val_labels)
+val_dataset = TensorDataset(validation_embeddings_tensor, validation_labels_tensor)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
 loss_fn = nn.CrossEntropyLoss()
@@ -127,8 +141,8 @@ for epoch in range(num_epochs):
     # Valutazione del modello sul set di validazione
     model.eval()
     with torch.no_grad():
-        val_outputs = model(val_embeddings)
-        val_loss = loss_fn(val_outputs, val_labels)
+        val_outputs = model(validation_embeddings_tensor)
+        val_loss = loss_fn(val_outputs, validation_labels_tensor)
         print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {loss.item():.4f}, Validation Loss: {val_loss.item():.4f}')
 
     # Salvare le loss per il grafico
@@ -147,10 +161,10 @@ plt.show()
 # Valutazione finale del modello sul set di test
 model.eval()
 with torch.no_grad():
-    test_outputs = model(test_embeddings)
+    test_outputs = model(test_embeddings_tensor)
     _, predicted_labels = torch.max(test_outputs, 1)
-    correct_predictions = (predicted_labels == test_labels).sum().item()
-    total_samples = len(test_labels)
+    correct_predictions = (predicted_labels == test_labels_tensor).sum().item()
+    total_samples = len(test_labels_tensor)
     accuracy = correct_predictions / total_samples * 100.0
 
 print(f'Accuracy on test set: {accuracy:.2f}%')
@@ -159,6 +173,5 @@ print(f'Accuracy on test set: {accuracy:.2f}%')
 class_names = label_encoder.classes_
 predicted_class_names = [class_names[i] for i in predicted_labels.numpy()]
 
-
 for i in range(20):  
-    print(f"Example {i + 1}: Real Label - {class_names[test_labels[i]]}, Predicted Label - {predicted_class_names[i]}")
+    print(f"Example {i + 1}: Real Label - {class_names[test_labels_encoded[i]]}, Predicted Label - {predicted_class_names[i]}")
